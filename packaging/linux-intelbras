@@ -1,0 +1,3 @@
+#!/bin/sh
+export PYTHONPATH=/usr/share/linux-intelbras
+exec /usr/bin/python3 -m simnext_linux "$@"

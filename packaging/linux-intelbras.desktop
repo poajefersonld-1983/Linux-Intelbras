@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Linux-Intelbras
+Comment=Monitor de câmeras desenvolvido por Jeferson Lackman
+Exec=linux-intelbras
+Terminal=false
+Categories=AudioVideo;Video;Network;
+StartupNotify=true

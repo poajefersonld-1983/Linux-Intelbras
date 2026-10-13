@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-intelbras"
+version = "0.12.0"
+description = "Linux-Intelbras — monitor de câmeras para Linux"
+authors = [{name = "Jeferson Lackman"}]
+requires-python = ">=3.11"
+dependencies = ["PyQt6>=6.8,<7"]
+license = {text = "GPL-3.0-or-later"}
+
+[project.scripts]
+linux-intelbras = "simnext_linux.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
