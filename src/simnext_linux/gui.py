@@ -29,6 +29,9 @@ from .playback import FramePacer
 
 CAMERA_MIME = "application/x-monitor-linux-cameras"
 DEVICE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+CAMERA_STATE_ROLE = DEVICE_ROLE + 1
+CAMERA_NAME_ROLE = DEVICE_ROLE + 2
+CAMERA_TILES_ROLE = DEVICE_ROLE + 3
 
 
 class ClientListDelegate(QStyledItemDelegate):
@@ -70,17 +73,81 @@ class ClientListDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class CameraListDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index):
+        view = self.parent()
+        return QSize(view.gridSize().width() if view is not None else 144, 82)
+
+    def paint(self, painter, option, index):
+        channel = index.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(channel, int):
+            return super().paint(painter, option, index)
+        state = index.data(CAMERA_STATE_ROLE) or 'idle'
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.save(); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = option.rect.adjusted(3, 3, -3, -3)
+        painter.setPen(QColor('#60a5fa' if selected else '#cbd5e1'))
+        painter.setBrush(QColor('#eff6ff' if selected else '#f8fafc' if hovered else '#ffffff'))
+        painter.drawRoundedRect(QRectF(rect), 9, 9)
+        badge = rect.adjusted(9, 11, 0, 0); badge.setWidth(30); badge.setHeight(30)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor('#dbeafe' if selected else '#f1f5f9'))
+        painter.drawRoundedRect(QRectF(badge), 7, 7)
+        font = QFont(option.font); font.setBold(True); font.setPointSizeF(10.5)
+        painter.setFont(font); painter.setPen(QColor('#1d4ed8'))
+        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, f'{channel:02d}')
+        title = rect.adjusted(46, 9, -6, 0); title.setHeight(19)
+        font.setPointSizeF(9.5); painter.setFont(font); painter.setPen(QColor('#0f172a'))
+        painter.drawText(title, Qt.AlignmentFlag.AlignVCenter,
+                         painter.fontMetrics().elidedText(f'Câmera {channel}', Qt.TextElideMode.ElideRight, title.width()))
+        subtitle = rect.adjusted(46, 29, -6, 0); subtitle.setHeight(17)
+        font.setBold(False); font.setPointSizeF(8); painter.setFont(font)
+        painter.setPen(QColor('#64748b'))
+        painter.drawText(subtitle, Qt.AlignmentFlag.AlignVCenter,
+                         painter.fontMetrics().elidedText(index.data(CAMERA_NAME_ROLE) or '',
+                                                         Qt.TextElideMode.ElideRight, subtitle.width()))
+        color = '#15803d' if state == 'live' else '#2563eb' if state == 'connecting' else '#64748b'
+        painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(QColor(color))
+        painter.drawEllipse(QRectF(rect.left() + 10, rect.bottom() - 17, 5, 5))
+        status = rect.adjusted(22, rect.height() - 26, -7, -4)
+        screens = index.data(CAMERA_TILES_ROLE) or []
+        label = ('Ao vivo' if state == 'live' else 'Conectando' if state == 'connecting' else 'Não aberta')
+        if state == 'live' and screens:
+            label += f' · Tela {screens[0]}'
+        painter.setPen(QColor(color))
+        painter.drawText(status, Qt.AlignmentFlag.AlignVCenter,
+                         painter.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, status.width()))
+        painter.restore()
+
+
 class CameraList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.setViewMode(QListWidget.ViewMode.IconMode)
+        self.setMovement(QListWidget.Movement.Static)
+        self.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.setWrapping(True)
+        self.setMouseTracking(True)
+        self.setUniformItemSizes(True)
+        self.setItemDelegate(CameraListDelegate(self))
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setGridSize(QSize(144, 82))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        width = max(110, (self.viewport().width() - 4) // 2)
+        size = QSize(width, 82)
+        if self.gridSize() != size:
+            self.setGridSize(size)
 
     def camera_mime(self):
         mime = QMimeData()
         cameras = [{"device": item.data(DEVICE_ROLE),
                     "channel": item.data(Qt.ItemDataRole.UserRole)}
-                   for item in self.selectedItems()]
+                   for item in self.selectedItems() if not item.isHidden()]
         mime.setData(CAMERA_MIME, json.dumps(cameras).encode("utf-8"))
         return mime
 
@@ -707,7 +774,7 @@ class MainWindow(QMainWindow):
         sidebar.setMinimumWidth(300); sidebar.setMaximumWidth(520)
         self.sidebar = sidebar
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(16, 16, 16, 16); side.setSpacing(10)
+        side.setContentsMargins(16, 16, 16, 16); side.setSpacing(6)
         heading = QLabel("Clientes"); heading.setStyleSheet("font-size:24px;font-weight:700")
         title_row = QHBoxLayout(); title_row.addWidget(heading, 1)
         self.client_count = QLabel('0'); self.client_count.setObjectName('clientCount')
@@ -732,11 +799,17 @@ class MainWindow(QMainWindow):
         self.devices.currentItemChanged.connect(self.refresh_channels)
         self.devices.itemClicked.connect(self.open_client_cameras)
         self.devices.itemActivated.connect(self.open_client_cameras)
-        hint = QLabel('Clique no cliente para abrir as câmeras 1 a 4 no mosaico.')
-        hint.setWordWrap(True); hint.setObjectName('clientHint'); side.addWidget(hint)
-        channel_heading = QLabel('Câmeras do cliente')
+        channel_heading = QLabel('Câmeras')
         channel_heading.setStyleSheet('font-size:15px;font-weight:600')
-        side.addWidget(channel_heading)
+        camera_header = QHBoxLayout(); camera_header.addWidget(channel_heading, 1)
+        self.camera_count = QLabel('0'); self.camera_count.setObjectName('clientCount')
+        camera_header.addWidget(self.camera_count); side.addLayout(camera_header)
+        self.camera_search = QLineEdit()
+        self.camera_search.setPlaceholderText('Buscar número ou nome…')
+        self.camera_search.setAccessibleName('Buscar câmera')
+        self.camera_search.setClearButtonEnabled(True)
+        self.camera_search.textChanged.connect(self.filter_cameras)
+        side.addWidget(self.camera_search)
         options_content = QWidget()
         options = QVBoxLayout(options_content)
         options.setContentsMargins(0, 0, 6, 0); options.setSpacing(8)
@@ -752,22 +825,35 @@ class MainWindow(QMainWindow):
         options.addWidget(self.channel_limit)
         self.channels = CameraList()
         self.channels.setObjectName('channelList')
-        self.channels.setMinimumHeight(148); self.channels.setMaximumHeight(180)
+        self.channels.setMinimumHeight(180); self.channels.setMaximumHeight(260)
         self.channels.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.channels.setToolTip("Arraste uma câmera; use Ctrl para selecionar várias.")
-        side.addWidget(self.channels, 1)
+        side.addWidget(self.channels, 2)
         self.channel_limit.valueChanged.connect(self.channel_range_changed)
         self.channels.itemClicked.connect(self.open_clicked_camera)
+        self.target = QComboBox()
+        self.target.setToolTip('Tela usada ao abrir uma câmera. Você também pode clicar no quadro do mosaico.')
+        self.target.currentIndexChanged.connect(self.highlight_target)
+        self.open_selected_button = QPushButton('Abrir seleção')
+        self.open_selected_button.setToolTip('Use Ctrl para selecionar várias câmeras e abrir as que ainda não estão no mosaico.')
+        self.open_selected_button.clicked.connect(self.connect_selected)
+        self.channels.itemSelectionChanged.connect(self.update_camera_selection)
+        camera_actions = QHBoxLayout()
+        camera_actions.addWidget(self.target, 1)
+        camera_actions.addWidget(self.open_selected_button, 2)
+        side.addLayout(camera_actions)
         account = QPushButton("Conta Intelbras")
         account.clicked.connect(lambda: self.open_cloud_account())
-        side.addWidget(account)
         configure = QPushButton("Configurar cliente")
         menu = QMenu(configure)
         for label, callback in [("Senha do equipamento nesta sessão", self.configure_password),
                                 ("Adicionar cliente", self.add_device), ("Editar cliente", self.edit_device),
                                 ("Excluir cliente", self.delete_device), ("Sobre Linux-Intelbras", self.show_about)]:
             action = menu.addAction(label); action.triggered.connect(callback)
-        configure.setMenu(menu); side.addWidget(configure)
+        configure.setMenu(menu)
+        account_actions = QHBoxLayout()
+        account_actions.addWidget(account); account_actions.addWidget(configure)
+        side.addLayout(account_actions)
         options.addWidget(QLabel("Mosaico"))
         self.mosaic = QComboBox()
         for n in (1, 4, 9): self.mosaic.addItem(f"{n} tela(s)", n)
@@ -776,11 +862,6 @@ class MainWindow(QMainWindow):
         self.mosaic_fullscreen_button = QPushButton("Tela cheia do mosaico (F11)")
         self.mosaic_fullscreen_button.clicked.connect(self.toggle_mosaic_fullscreen)
         options.addWidget(self.mosaic_fullscreen_button)
-        options.addWidget(QLabel("Tela de destino"))
-        self.target = QComboBox(); options.addWidget(self.target)
-        self.target.currentIndexChanged.connect(self.highlight_target)
-        connect = QPushButton("Abrir câmeras no mosaico"); connect.clicked.connect(self.connect_selected)
-        options.addWidget(connect)
         note = QLabel("Intelbras Cloud e RTSP\nClique no quadro e depois na câmera.\nOu arraste a câmera para o quadro.")
         note.setWordWrap(True); options.addWidget(note)
         self.options_toggle = QPushButton('Mais opções ▾')
@@ -822,11 +903,10 @@ class MainWindow(QMainWindow):
             QLabel#clientCount { background:#e2e8f0; color:#334155; border-radius:10px; padding:4px 9px; }
             QLineEdit { background:#f8fafc; color:#0f172a; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:14px; }
             QListWidget#clientList { background:#ffffff; border:0; padding:0; }
-            QListWidget#channelList { background:#f8fafc; color:#334155; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; }
-            QListWidget#channelList::item { padding:7px 5px; }
-            QListWidget#channelList::item:selected { background:#dbeafe; color:#1e40af; }
+            QListWidget#channelList { background:#ffffff; color:#334155; border:0; padding:0; font-size:13px; }
             QPushButton { background:#f1f5f9; color:#0f172a; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:13px; }
             QPushButton:hover { background:#e2e8f0; }
+            QPushButton:disabled { background:#f8fafc; color:#94a3b8; border-color:#e2e8f0; }
             QComboBox, QSpinBox { background:#ffffff; color:#0f172a; border:1px solid #cbd5e1; border-radius:6px; padding:6px; }
             QCheckBox { color:#334155; }
             QScrollArea, QScrollArea QWidget { background:#ffffff; }
@@ -987,6 +1067,12 @@ class MainWindow(QMainWindow):
             return
         device = self.selected_device()
         all_clients = self.all_clients.isChecked()
+        filter_key = 'all' if all_clients else device.id if device else None
+        if getattr(self, '_camera_filter_client_id', None) != filter_key:
+            self.camera_search.blockSignals(True)
+            self.camera_search.clear()
+            self.camera_search.blockSignals(False)
+            self._camera_filter_client_id = filter_key
         self.channel_limit.setEnabled(not all_clients)
         if device is not None and not all_clients:
             self.channel_limit.blockSignals(True)
@@ -1007,18 +1093,56 @@ class MainWindow(QMainWindow):
         if selected:
             self.channels.scrollToItem(selected[0])
 
+    def filter_cameras(self, text=None):
+        if not hasattr(self, 'channels'):
+            return
+        query = (self.camera_search.text() if text is None else text).strip().casefold()
+        visible = live = 0
+        for index in range(self.channels.count()):
+            item = self.channels.item(index)
+            match = (item.data(Qt.ItemDataRole.UserRole) == int(query) if query.isdecimal()
+                     else not query or query in item.text().casefold())
+            item.setHidden(not match)
+            visible += int(match)
+            live += int(match and item.data(CAMERA_STATE_ROLE) == 'live')
+        total = self.channels.count()
+        self.camera_count.setText(f'{visible}/{total}' if query else f'{live} ao vivo' if live else str(total))
+        self.update_camera_selection()
+
+    def update_camera_selection(self):
+        if not hasattr(self, 'open_selected_button'):
+            return
+        selected = [item for item in self.channels.selectedItems() if not item.isHidden()]
+        active = {(tile.device_id, tile.channel_number) for tile in getattr(self, 'tiles', [])
+                  if tile.device_id is not None}
+        pending = [item for item in selected if (item.data(DEVICE_ROLE), item.data(Qt.ItemDataRole.UserRole)) not in active]
+        self.open_selected_button.setEnabled(bool(pending))
+        self.open_selected_button.setText(f'Abrir seleção ({len(selected)})' if pending
+                                         else f'Já abertas ({len(selected)})' if selected else 'Abrir seleção')
+
     def update_camera_activity(self):
         if not hasattr(self, "tiles"):
             return
-        active = {(tile.device_id, tile.channel_number): tile.last_image is not None
-                  for tile in self.tiles if tile.device_id is not None}
+        active = {}
+        for tile in self.tiles:
+            if tile.device_id is not None:
+                entry = active.setdefault((tile.device_id, tile.channel_number), {'live': False, 'tiles': []})
+                entry['live'] |= tile.last_image is not None
+                entry['tiles'].append(tile.number)
         names = {device.id: device.name for device in self.store.list()}
         for i in range(self.channels.count()):
             item = self.channels.item(i)
             key = (item.data(DEVICE_ROLE), item.data(Qt.ItemDataRole.UserRole))
-            state = " • Ao vivo" if active.get(key) else " • Conectando" if key in active else ""
+            entry = active.get(key)
+            state = " • Ao vivo" if entry and entry['live'] else " • Conectando" if entry else ""
+            item.setData(CAMERA_NAME_ROLE, names.get(key[0], 'Cliente'))
+            item.setData(CAMERA_STATE_ROLE, 'live' if entry and entry['live'] else 'connecting' if entry else 'idle')
+            item.setData(CAMERA_TILES_ROLE, entry['tiles'] if entry else [])
             item.setText(f"{names.get(key[0], 'Cliente')} • Câmera {key[1]}{state}")
-            item.setToolTip("Ao vivo: imagem recebida neste mosaico." if active.get(key) else "Arraste para abrir. A disponibilidade será verificada ao conectar.")
+            item.setToolTip(f"{names.get(key[0], 'Cliente')} • Câmera {key[1]}\n" +
+                            (f"Ao vivo na tela {entry['tiles'][0]}. Clique para selecionar essa tela." if entry and entry['live']
+                             else "Conectando ao DVR." if entry else "Clique para abrir ou arraste para uma tela. Ctrl seleciona várias."))
+        self.filter_cameras()
 
     def camera_choices(self, items):
         devices = {device.id: device for device in self.store.list()}
@@ -1098,6 +1222,10 @@ class MainWindow(QMainWindow):
         if QApplication.keyboardModifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
             return
         choices = self.camera_choices([(item.data(DEVICE_ROLE), item.data(Qt.ItemDataRole.UserRole))])
+        for index, tile in enumerate(self.tiles[:self.mosaic.currentData()]):
+            if tile.device_id == choices[0].id and tile.channel_number == choices[0].channel:
+                self.select_tile(index)
+                return
         target = self.target.currentData()
         if target is None:
             return
@@ -1109,7 +1237,11 @@ class MainWindow(QMainWindow):
     def connect_selected(self):
         try:
             choices = self.camera_choices([(item.data(DEVICE_ROLE), item.data(Qt.ItemDataRole.UserRole))
-                                           for item in self.channels.selectedItems()])
+                                           for item in self.channels.selectedItems() if not item.isHidden()])
+            active = {(tile.device_id, tile.channel_number) for tile in self.tiles if tile.device_id is not None}
+            choices = [device for device in choices if (device.id, device.channel) not in active]
+            if not choices:
+                return
             self.open_cameras(self.mosaic_assignments(choices))
         except ValueError as error:
             QMessageBox.information(self, "Mosaico", str(error))

@@ -6,14 +6,17 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 
 ## Interface
 
-![Seleção ampliada de clientes](docs/client-overview.png)
+![Seleção de clientes e câmeras](docs/camera-chooser.png)
 
-Prévia com cadastros fictícios, sem imagens reais de câmeras.
+Prévia ilustrativa com cadastros e estados fictícios, sem imagens reais de câmeras.
 
 ## Recursos
 
 - Clique no cliente para abrir automaticamente os canais 1 a 4 no mosaico.
 - Seleção de clientes com cartões maiores, busca por nome e painel de largura ajustável.
+- Câmeras em cartões maiores, com busca por número ou nome e estados Ao vivo, Conectando e Não aberta.
+- Escolha da tela e abertura de várias câmeras acessíveis no painel principal.
+- Clicar em uma câmera já aberta seleciona sua tela sem reiniciar vídeo ou áudio.
 - Controles adicionais de mosaico e canais agrupados em Mais opções.
 
 - Login da Conta Intelbras e importação do catálogo iSIC Lite.
@@ -32,7 +35,7 @@ Prévia com cadastros fictícios, sem imagens reais de câmeras.
 Baixe o pacote `.deb` na página de [releases](https://github.com/poajefersonld-1983/Linux-Intelbras/releases) e instale:
 
 ```sh
-sudo apt install ./linux-intelbras_0.14.0-1_all.deb
+sudo apt install ./linux-intelbras_0.15.0-1_all.deb
 linux-intelbras
 ```
 

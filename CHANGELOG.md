@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## 0.15.0 — 08/11/2026
+
+- Exibe câmeras em cartões maiores, organizados em duas colunas.
+- Adiciona busca por número exato ou nome do cliente e indica estados de recepção.
+- Mostra a tela de destino e o botão Abrir seleção no painel principal.
+- Seleciona a tela de câmeras já abertas sem reiniciar vídeo ou áudio.
+- Exclui câmeras ocultas pela busca da abertura e do arraste em grupo.
+- Preserva o uso do painel em janelas de 1280×800.
+
 ## 0.14.0 — 08/11/2026
 
 - Abre os canais 1 a 4 ao clicar ou ativar um cliente.
