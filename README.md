@@ -13,7 +13,7 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 - HD por padrão; escolha SD/HD por quadro.
 - Tela cheia apenas com imagens; F11 e Esc para entrar/sair.
 - Captura de imagem e indicação de vídeo recebido.
-- Áudio Cloud por canal, acionado pelo checkbox Áudio, com indicação de nível no tooltip.
+- Áudio Cloud por canal, acionado pelo botão Ativar áudio, com indicação de nível no tooltip.
 - Compensação automática do formato Intelbras 1080N (960×1080).
 - Senhas e tokens somente na memória da sessão.
 
@@ -22,7 +22,7 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 Baixe o pacote `.deb` na página de [releases](https://github.com/poajefersonld-1983/Linux-Intelbras/releases) e instale:
 
 ```sh
-sudo apt install ./linux-intelbras_0.13.0-1_all.deb
+sudo apt install ./linux-intelbras_0.13.1-1_all.deb
 linux-intelbras
 ```
 

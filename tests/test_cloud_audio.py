@@ -16,6 +16,24 @@ class CloudAudioTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_audio_button_toggles_on_and_off_and_disconnect_resets_it(self):
+        from PyQt6.QtWidgets import QPushButton
+        tile = VideoTile(1)
+        self.assertIsInstance(tile.mute, QPushButton)
+        self.assertEqual(tile.mute.text(), 'Ativar áudio')
+        tile.mute.click()
+        self.assertTrue(tile.mute.isChecked())
+        self.assertFalse(tile.audio.isMuted())
+        self.assertEqual(tile.mute.text(), 'Desativar áudio')
+        tile.mute.click()
+        self.assertFalse(tile.mute.isChecked())
+        self.assertTrue(tile.audio.isMuted())
+        self.assertEqual(tile.mute.text(), 'Ativar áudio')
+        tile.mute.click()
+        tile.disconnect()
+        self.assertFalse(tile.mute.isChecked())
+        self.assertEqual(tile.mute.text(), 'Ativar áudio')
+
     def test_pcm_is_bounded_and_notifications_are_coalesced(self):
         worker = CloudAudioWorker('unused')
         notices = []
@@ -76,6 +94,7 @@ class CloudAudioTests(unittest.TestCase):
         tile.status.setText('Reproduzindo via Intelbras Cloud')
         tile.cloud_audio_failed('Sem áudio neste canal.', tile._audio_generation)
         self.assertFalse(tile.mute.isChecked())
+        self.assertEqual(tile.mute.text(), 'Ativar áudio')
         self.assertEqual(tile.device_id, 'test-camera')
         self.assertEqual(tile.status.text(), 'Reproduzindo via Intelbras Cloud')
         self.assertEqual(tile.mute.toolTip(), 'Sem áudio neste canal.')
@@ -109,15 +128,18 @@ class CloudAudioTests(unittest.TestCase):
              patch('simnext_linux.gui.QAudioSink', Sink), \
              patch.object(CloudAudioWorker, 'start'):
             tile.mute.setChecked(True)
+            self.assertEqual(tile.mute.text(), 'Cancelar áudio…')
             worker, sink = tile.cloud_audio_worker, tile._audio_sink
             self.assertIsNotNone(worker)
             pcm = struct.pack('<h', 1234) * 320
             worker.publish_pcm(pcm)
+            self.assertEqual(tile.mute.text(), 'Desativar áudio')
             self.assertEqual(len(tile._audio_pending), 440)
             for _ in range(4): tile.flush_cloud_audio()
             self.assertEqual(sink.data, pcm)
             self.assertEqual(tile._audio_pending, b'')
             tile.mute.setChecked(False)
+            self.assertEqual(tile.mute.text(), 'Ativar áudio')
             self.assertTrue(worker.cancelled.is_set())
             self.assertTrue(sink.stopped)
             self.assertEqual(tile.device_id, 'test-camera')

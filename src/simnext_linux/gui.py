@@ -203,7 +203,9 @@ class VideoTile(QWidget):
         self.quality.currentIndexChanged.connect(self.change_quality)
         self.status = QLabel("Selecione um dispositivo e clique em Conectar.")
         self.status.setWordWrap(True)
-        self.mute = QCheckBox("Áudio")
+        self.mute = QPushButton("Ativar áudio")
+        self.mute.setCheckable(True)
+        self.mute.setStyleSheet("QPushButton:checked { background:#1d4ed8; color:white; }")
         self.mute.toggled.connect(self.toggle_audio)
         stop = QPushButton("Desconectar"); stop.clicked.connect(self.disconnect)
         snapshot = QPushButton("Capturar"); snapshot.clicked.connect(self.capture)
@@ -337,6 +339,7 @@ class VideoTile(QWidget):
             self.start_cloud_audio()
 
     def toggle_audio(self, enabled):
+        self.mute.setText('Desativar áudio' if enabled else 'Ativar áudio')
         device = self._active_device
         if device is None or device.connection != 'cloud':
             self.audio.setMuted(not enabled)
@@ -349,6 +352,7 @@ class VideoTile(QWidget):
 
     def start_cloud_audio(self):
         self.stop_cloud_audio()
+        self.mute.setText('Cancelar áudio…')
         device = self._active_device
         proxy = self.p2p_bridge.entry['bridge'].proxy if self.p2p_bridge is not None else None
         if device is None or proxy is None:
@@ -385,6 +389,7 @@ class VideoTile(QWidget):
     def receive_cloud_audio(self, worker, generation):
         if generation != self._audio_generation or not self.mute.isChecked():
             return
+        self.mute.setText('Desativar áudio')
         self._audio_pending.extend(worker.take_pcm())
         maximum = BYTES_PER_SECOND // 4
         if len(self._audio_pending) > maximum:
@@ -423,6 +428,7 @@ class VideoTile(QWidget):
         self.mute.blockSignals(True)
         self.mute.setChecked(False)
         self.mute.blockSignals(False)
+        self.mute.setText('Ativar áudio')
         self.mute.setToolTip(message)
 
     def set_presentation(self, enabled):
@@ -567,6 +573,7 @@ class VideoTile(QWidget):
         self.channel_number = None
         self.activity_changed.emit()
         self.mute.setChecked(False); self.audio.setMuted(True)
+        self.mute.setText('Ativar áudio')
         self.mute.setEnabled(True)
         self.mute.setToolTip("")
         self.cloud_image.clear()

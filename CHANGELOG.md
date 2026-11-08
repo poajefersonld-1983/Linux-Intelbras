@@ -1,5 +1,11 @@
 # Histórico de alterações
 
+## 0.13.1 — 08/11/2026
+
+- Troca o checkbox de áudio por um botão explícito Ativar áudio / Desativar áudio.
+- Durante a conexão, o botão Cancelar áudio permite interromper a tentativa.
+- Falhas de áudio e desconexão restauram o botão ao estado desligado.
+
 ## 0.13.0 — 08/11/2026
 
 - Habilita áudio nos canais Intelbras Cloud pelo checkbox Áudio.
