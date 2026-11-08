@@ -4,12 +4,22 @@ Monitor de câmeras para Linux desenvolvido por **Jeferson Lackman**.
 
 Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou Intelbras Cloud/P2P com configuração local autorizada.
 
+## Interface
+
+![Seleção ampliada de clientes](docs/client-overview.png)
+
+Prévia com cadastros fictícios, sem imagens reais de câmeras.
+
 ## Recursos
+
+- Clique no cliente para abrir automaticamente os canais 1 a 4 no mosaico.
+- Seleção de clientes com cartões maiores, busca por nome e painel de largura ajustável.
+- Controles adicionais de mosaico e canais agrupados em Mais opções.
 
 - Login da Conta Intelbras e importação do catálogo iSIC Lite.
 - Transporte IPv4 direto e por relay, com parâmetros fornecidos localmente.
 - Mosaicos de 1, 4 ou 9 quadros, combinando câmeras de clientes diferentes.
-- Clique ou arraste para escolher câmera e quadro.
+- Clique ou arraste para escolher uma câmera e quadro individualmente. Clicar no mesmo cliente não reinicia seus quatro canais já abertos.
 - HD por padrão; escolha SD/HD por quadro.
 - Tela cheia apenas com imagens; F11 e Esc para entrar/sair.
 - Captura de imagem e indicação de vídeo recebido.
@@ -22,7 +32,7 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 Baixe o pacote `.deb` na página de [releases](https://github.com/poajefersonld-1983/Linux-Intelbras/releases) e instale:
 
 ```sh
-sudo apt install ./linux-intelbras_0.13.1-1_all.deb
+sudo apt install ./linux-intelbras_0.14.0-1_all.deb
 linux-intelbras
 ```
 

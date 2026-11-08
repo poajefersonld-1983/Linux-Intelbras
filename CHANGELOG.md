@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## 0.14.0 — 08/11/2026
+
+- Abre os canais 1 a 4 ao clicar ou ativar um cliente.
+- Preserva transmissões e áudio já abertos ao repetir a seleção.
+- Confere a autenticação antes de substituir o mosaico existente.
+- Amplia os cartões de clientes e adiciona busca por nome e largura ajustável.
+- Agrupa controles avançados em Mais opções, sem reduzir a lista principal.
+- Mantém a abertura do aplicativo sem conexões automáticas.
+
 ## 0.13.1 — 08/11/2026
 
 - Troca o checkbox de áudio por um botão explícito Ativar áudio / Desativar áudio.

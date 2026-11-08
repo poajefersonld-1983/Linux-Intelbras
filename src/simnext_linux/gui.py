@@ -8,15 +8,16 @@ import threading
 import time
 from dataclasses import replace
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QMimeData, QEvent, QTimer
-from PyQt6.QtGui import QAction, QCloseEvent, QPixmap, QDrag
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QMimeData, QEvent, QTimer, QSize, QRectF
+from PyQt6.QtGui import QAction, QCloseEvent, QPixmap, QDrag, QColor, QFont, QPainter
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoFrame, QAudioSink, QAudioFormat, QMediaDevices
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QApplication, QMenu, QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
+    QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QSplitter, QScrollArea,
+    QStyledItemDelegate, QStyle,
 )
 
 from .domain import Device, build_rtsp_url
@@ -28,6 +29,45 @@ from .playback import FramePacer
 
 CAMERA_MIME = "application/x-monitor-linux-cameras"
 DEVICE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+
+class ClientListDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index):
+        return QSize(240, 72)
+
+    def paint(self, painter, option, index):
+        device = index.data(Qt.ItemDataRole.UserRole)
+        if device is None:
+            return super().paint(painter, option, index)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = option.rect.adjusted(4, 3, -4, -3)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.setPen(QColor('#93c5fd' if selected else '#e2e8f0'))
+        painter.setBrush(QColor('#eff6ff' if selected else '#f8fafc' if hovered else '#ffffff'))
+        painter.drawRoundedRect(QRectF(rect), 10, 10)
+        badge = rect.adjusted(12, 14, 0, 0)
+        badge.setWidth(38); badge.setHeight(38)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor('#2563eb' if selected else '#e2e8f0'))
+        painter.drawRoundedRect(QRectF(badge), 9, 9)
+        font = QFont(option.font); font.setPointSizeF(10.5); font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor('#ffffff' if selected else '#475569'))
+        initials = ''.join(part[0] for part in device.name.split()[:2]).upper()
+        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, initials)
+        text = rect.adjusted(62, 10, -28, -10)
+        painter.setPen(QColor('#0f172a'))
+        title = painter.fontMetrics().elidedText(device.name, Qt.TextElideMode.ElideRight, text.width())
+        painter.drawText(text.adjusted(0, 0, 0, -21), Qt.AlignmentFlag.AlignVCenter, title)
+        font.setPointSizeF(9); font.setBold(False); painter.setFont(font)
+        painter.setPen(QColor('#475569'))
+        subtitle = 'Intelbras Cloud' if device.connection == 'cloud' else 'Conexão RTSP'
+        painter.drawText(text.adjusted(0, 24, 0, 0), Qt.AlignmentFlag.AlignVCenter, subtitle)
+        painter.setPen(QColor('#2563eb' if selected else '#94a3b8'))
+        painter.drawText(rect.adjusted(rect.width() - 24, 0, -8, 0), Qt.AlignmentFlag.AlignCenter, '›')
+        painter.restore()
 
 
 class CameraList(QListWidget):
@@ -201,7 +241,7 @@ class VideoTile(QWidget):
         self._presentation = False
         self._quality_chosen = False
         self.quality.currentIndexChanged.connect(self.change_quality)
-        self.status = QLabel("Selecione um dispositivo e clique em Conectar.")
+        self.status = QLabel("Clique em um cliente ou escolha uma câmera.")
         self.status.setWordWrap(True)
         self.mute = QPushButton("Ativar áudio")
         self.mute.setCheckable(True)
@@ -663,32 +703,59 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         central = QWidget(); self.setCentralWidget(central)
         root = QHBoxLayout(central)
-        sidebar = QWidget(); sidebar.setMaximumWidth(300)
+        sidebar = QWidget(); sidebar.setObjectName('clientSidebar')
+        sidebar.setMinimumWidth(300); sidebar.setMaximumWidth(520)
         self.sidebar = sidebar
         side = QVBoxLayout(sidebar)
-        heading = QLabel("Clientes / DVRs"); heading.setStyleSheet("font-size:20px;font-weight:600")
-        side.addWidget(heading)
+        side.setContentsMargins(16, 16, 16, 16); side.setSpacing(10)
+        heading = QLabel("Clientes"); heading.setStyleSheet("font-size:24px;font-weight:700")
+        title_row = QHBoxLayout(); title_row.addWidget(heading, 1)
+        self.client_count = QLabel('0'); self.client_count.setObjectName('clientCount')
+        title_row.addWidget(self.client_count); side.addLayout(title_row)
         self.account_notice = QLabel("Conta Intelbras não conectada. Entre uma vez para usar as credenciais dos clientes.")
         self.account_notice.setWordWrap(True)
+        self.account_notice.setObjectName('accountNotice')
         side.addWidget(self.account_notice)
-        self.devices = QListWidget(); side.addWidget(self.devices, 1)
+        self.client_search = QLineEdit()
+        self.client_search.setPlaceholderText('Buscar cliente…')
+        self.client_search.setClearButtonEnabled(True)
+        self.client_search.setAccessibleName('Buscar cliente')
+        self.client_search.textChanged.connect(self.filter_clients)
+        side.addWidget(self.client_search)
+        self.devices = QListWidget(); self.devices.setObjectName('clientList')
+        self.devices.setMinimumHeight(160)
+        self.devices.setMouseTracking(True)
+        self.devices.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.devices.setItemDelegate(ClientListDelegate(self.devices))
+        self.devices.setToolTip('Clique em um cliente para abrir as câmeras 1 a 4.')
+        side.addWidget(self.devices, 3)
         self.devices.currentItemChanged.connect(self.refresh_channels)
-        side.addWidget(QLabel("Câmeras — clique para abrir ou arraste"))
+        self.devices.itemClicked.connect(self.open_client_cameras)
+        self.devices.itemActivated.connect(self.open_client_cameras)
+        hint = QLabel('Clique no cliente para abrir as câmeras 1 a 4 no mosaico.')
+        hint.setWordWrap(True); hint.setObjectName('clientHint'); side.addWidget(hint)
+        channel_heading = QLabel('Câmeras do cliente')
+        channel_heading.setStyleSheet('font-size:15px;font-weight:600')
+        side.addWidget(channel_heading)
+        options_content = QWidget()
+        options = QVBoxLayout(options_content)
+        options.setContentsMargins(0, 0, 6, 0); options.setSpacing(8)
         self.all_clients = QCheckBox("Câmeras de todos os clientes")
         self.all_clients.toggled.connect(self.refresh_channels)
         self.all_clients.setChecked(False)
-        side.addWidget(self.all_clients)
+        options.addWidget(self.all_clients)
         self.channel_limit = QSpinBox()
         self.channel_limit.setRange(1, 64)
         self.channel_limit.setValue(16)
         self.channel_limit.setPrefix("Exibir canais 1 a ")
         self.channel_limit.setToolTip("Ajuste conforme a quantidade de canais do DVR. Esta lista não detecta câmeras online.")
-        side.addWidget(self.channel_limit)
+        options.addWidget(self.channel_limit)
         self.channels = CameraList()
-        self.channels.setMaximumHeight(220)
+        self.channels.setObjectName('channelList')
+        self.channels.setMinimumHeight(148); self.channels.setMaximumHeight(180)
         self.channels.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.channels.setToolTip("Arraste uma câmera; use Ctrl para selecionar várias.")
-        side.addWidget(self.channels)
+        side.addWidget(self.channels, 1)
         self.channel_limit.valueChanged.connect(self.channel_range_changed)
         self.channels.itemClicked.connect(self.open_clicked_camera)
         account = QPushButton("Conta Intelbras")
@@ -701,29 +768,44 @@ class MainWindow(QMainWindow):
                                 ("Excluir cliente", self.delete_device), ("Sobre Linux-Intelbras", self.show_about)]:
             action = menu.addAction(label); action.triggered.connect(callback)
         configure.setMenu(menu); side.addWidget(configure)
-        side.addWidget(QLabel("Mosaico"))
+        options.addWidget(QLabel("Mosaico"))
         self.mosaic = QComboBox()
         for n in (1, 4, 9): self.mosaic.addItem(f"{n} tela(s)", n)
         self.mosaic.setCurrentIndex(1)
-        self.mosaic.currentIndexChanged.connect(self.layout_tiles); side.addWidget(self.mosaic)
+        self.mosaic.currentIndexChanged.connect(self.layout_tiles); options.addWidget(self.mosaic)
         self.mosaic_fullscreen_button = QPushButton("Tela cheia do mosaico (F11)")
         self.mosaic_fullscreen_button.clicked.connect(self.toggle_mosaic_fullscreen)
-        side.addWidget(self.mosaic_fullscreen_button)
-        side.addWidget(QLabel("Tela de destino"))
-        self.target = QComboBox(); side.addWidget(self.target)
+        options.addWidget(self.mosaic_fullscreen_button)
+        options.addWidget(QLabel("Tela de destino"))
+        self.target = QComboBox(); options.addWidget(self.target)
         self.target.currentIndexChanged.connect(self.highlight_target)
         connect = QPushButton("Abrir câmeras no mosaico"); connect.clicked.connect(self.connect_selected)
-        side.addWidget(connect)
+        options.addWidget(connect)
         note = QLabel("Intelbras Cloud e RTSP\nClique no quadro e depois na câmera.\nOu arraste a câmera para o quadro.")
-        note.setWordWrap(True); side.addWidget(note)
-        root.addWidget(sidebar)
+        note.setWordWrap(True); options.addWidget(note)
+        self.options_toggle = QPushButton('Mais opções ▾')
+        self.options_toggle.setCheckable(True)
+        self.options_scroll = QScrollArea()
+        self.options_scroll.setWidgetResizable(True)
+        self.options_scroll.setWidget(options_content)
+        self.options_scroll.setMaximumHeight(240)
+        self.options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.options_scroll.hide()
+        self.options_toggle.toggled.connect(self.toggle_client_options)
+        side.addWidget(self.options_toggle); side.addWidget(self.options_scroll)
         area = QWidget(); area_layout = QVBoxLayout(area)
         self.fullscreen_exit = QPushButton("Sair da tela cheia (Esc)")
         self.fullscreen_exit.clicked.connect(self.exit_fullscreen)
         self.fullscreen_exit.hide()
         area_layout.addWidget(self.fullscreen_exit, 0, Qt.AlignmentFlag.AlignRight)
         self.grid = QGridLayout(); area_layout.addLayout(self.grid, 1)
-        root.addWidget(area, 1)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setHandleWidth(6)
+        self.main_splitter.addWidget(sidebar); self.main_splitter.addWidget(area)
+        self.main_splitter.setStretchFactor(0, 0); self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([360, 920])
+        root.addWidget(self.main_splitter, 1)
         self.tiles = [VideoTile(i + 1) for i in range(9)]
         for tile in self.tiles:
             tile.cameras_dropped.connect(self.drop_cameras)
@@ -733,6 +815,22 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("QMainWindow{background:#f1f5f9} QLabel,QCheckBox{color:#172b4d} "
                            "QPushButton{padding:7px} QListWidget,QLineEdit,QComboBox{padding:5px} "
                            "QVideoWidget{background:#111827}")
+        sidebar.setStyleSheet('''
+            QWidget#clientSidebar { background:#ffffff; border-radius:14px; }
+            QWidget#clientSidebar QLabel { color:#0f172a; }
+            QLabel#accountNotice, QLabel#clientHint { color:#64748b; font-size:12px; }
+            QLabel#clientCount { background:#e2e8f0; color:#334155; border-radius:10px; padding:4px 9px; }
+            QLineEdit { background:#f8fafc; color:#0f172a; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:14px; }
+            QListWidget#clientList { background:#ffffff; border:0; padding:0; }
+            QListWidget#channelList { background:#f8fafc; color:#334155; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; }
+            QListWidget#channelList::item { padding:7px 5px; }
+            QListWidget#channelList::item:selected { background:#dbeafe; color:#1e40af; }
+            QPushButton { background:#f1f5f9; color:#0f172a; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:13px; }
+            QPushButton:hover { background:#e2e8f0; }
+            QComboBox, QSpinBox { background:#ffffff; color:#0f172a; border:1px solid #cbd5e1; border-radius:6px; padding:6px; }
+            QCheckBox { color:#334155; }
+            QScrollArea, QScrollArea QWidget { background:#ffffff; }
+        ''')
         escape = QAction(self); escape.setShortcut("Escape")
         escape.triggered.connect(self.exit_fullscreen); self.addAction(escape)
         full_mosaic = QAction(self); full_mosaic.setShortcut("F11")
@@ -740,16 +838,51 @@ class MainWindow(QMainWindow):
         self.refresh(); self.layout_tiles()
         if self.devices.count(): self.devices.setCurrentRow(0)
 
+    def toggle_client_options(self, enabled):
+        self.options_scroll.setVisible(enabled)
+        self.options_toggle.setText('Ocultar opções ▴' if enabled else 'Mais opções ▾')
+
+    def filter_clients(self, text=None):
+        query = (self.client_search.text() if text is None else text).strip().casefold()
+        visible = 0
+        for index in range(self.devices.count()):
+            item = self.devices.item(index)
+            device = item.data(Qt.ItemDataRole.UserRole)
+            match = not query or query in device.name.casefold()
+            item.setHidden(not match)
+            visible += int(match)
+        total = self.devices.count()
+        self.client_count.setText(f'{visible}/{total}' if query else str(total))
+
+    def open_client_cameras(self, item):
+        device = item.data(Qt.ItemDataRole.UserRole) if item is not None else self.selected_device()
+        if device is None:
+            return
+        if item is not None:
+            self.devices.setCurrentItem(item)
+        self.all_clients.setChecked(False)
+        choices = self.camera_choices([(device.id, number) for number in range(1, 5)])
+        if self.open_cameras(list(zip(choices, self.tiles[:4])), client_overview=True):
+            self.select_tile(0)
+            self.channels.clearSelection()
+            for index in range(self.channels.count()):
+                channel = self.channels.item(index)
+                channel.setSelected(channel.data(DEVICE_ROLE) == device.id
+                                    and channel.data(Qt.ItemDataRole.UserRole) <= 4)
+            self.account_notice.setText(f'{device.name} — câmeras 1 a 4 no mosaico.')
+
     def refresh(self):
         selected = self.selected_device()
         selected_id = selected.id if selected else None
         self.devices.clear()
         for device in self.store.list():
             item = QListWidgetItem(f"{device.name}\nIntelbras Cloud • serial" if device.connection == "cloud" else f"{device.name}\nCanal {device.channel} • {'principal' if device.subtype == 0 else 'extra'}")
+            item.setToolTip(f'{device.name}\nClique para abrir as câmeras 1 a 4.')
             item.setData(Qt.ItemDataRole.UserRole, device); self.devices.addItem(item)
             if device.id == selected_id: self.devices.setCurrentItem(item)
         if self.devices.count() and self.devices.currentItem() is None:
             self.devices.setCurrentRow(0)
+        self.filter_clients()
 
     def open_cloud_account(self, *, for_playback=False):
         from .cloud import CloudClient, CloudError
@@ -766,7 +899,7 @@ class MainWindow(QMainWindow):
         CloudDialog(self.cloud_client, self.store, self.refresh, self, return_after_login=for_playback).exec()
         self._passwords.clear()
         authenticated = bool(getattr(self.cloud_client, "authenticated", False))
-        self.account_notice.setText("Conta Intelbras conectada. Escolha o cliente e clique na câmera." if authenticated else "Conta Intelbras não conectada. Clique em Conta Intelbras e em Entrar.")
+        self.account_notice.setText("Conta Intelbras conectada. Clique no cliente para abrir as quatro primeiras câmeras." if authenticated else "Conta Intelbras não conectada. Clique em Conta Intelbras e em Entrar.")
 
     def save_catalog_schema(self, schema):
         path = self.store.path.with_name("catalog-schema.json")
@@ -981,7 +1114,11 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             QMessageBox.information(self, "Mosaico", str(error))
 
-    def open_cameras(self, assignments):
+    def open_cameras(self, assignments, *, client_overview=False):
+        if client_overview:
+            # A repeated click must not restart a live camera or its audio.
+            assignments = [(device, tile) for device, tile in assignments
+                           if tile.device_id != device.id or tile.channel_number != device.channel]
         # Collect each client's credentials before replacing any existing video.
         passwords = {}
         for device, tile in assignments:
@@ -1004,6 +1141,8 @@ class MainWindow(QMainWindow):
                     return
                 self._passwords[device.id] = password
             passwords[device.id] = password
+        if client_overview:
+            self.mosaic.setCurrentIndex(self.mosaic.findData(4))
         for device, tile in assignments:
             try:
                 tile.connect_device(device, passwords[device.id])
@@ -1011,6 +1150,7 @@ class MainWindow(QMainWindow):
                 tile.disconnect()
                 tile.status.setText("Não foi possível iniciar a transmissão desta câmera.")
         passwords.clear()
+        return True
 
     def show_about(self):
         from . import __version__
