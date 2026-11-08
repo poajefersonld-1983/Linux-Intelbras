@@ -81,7 +81,7 @@ class P2PBridge:
 
 
 class BridgeLease:
-    """One tile's reference to a transport shared by up to four RTSP streams."""
+    """One tile's reference to a bounded transport lease."""
     def __init__(self, pool, entry):
         self.pool, self.entry = pool, entry
         self.released = False
@@ -103,14 +103,18 @@ class BridgeLease:
 
 
 class BridgePool:
-    def __init__(self):
+    def __init__(self, max_streams=1):
+        # Independent HD tunnels avoid sharing the relay bandwidth and queue.
+        if not 1 <= max_streams <= 4:
+            raise ValueError("Invalid number of streams per tunnel")
+        self.max_streams = max_streams
         self.lock = threading.Lock()
         self.entries = []
 
     def acquire(self, serial, port):
         with self.lock:
             entry = next((item for item in self.entries
-                          if item["key"] == (serial, port) and item["users"] < 4), None)
+                          if item["key"] == (serial, port) and item["users"] < self.max_streams), None)
             if entry is None:
                 entry = {"key": (serial, port), "bridge": P2PBridge(serial, port), "users": 0}
                 self.entries.append(entry)

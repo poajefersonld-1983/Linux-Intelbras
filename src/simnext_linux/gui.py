@@ -5,11 +5,12 @@ from uuid import uuid4
 import json
 import os
 import threading
+import time
 from dataclasses import replace
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QMimeData, QEvent, QTimer
 from PyQt6.QtGui import QAction, QCloseEvent, QPixmap, QDrag
-from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoFrame, QAudioSink, QAudioFormat, QMediaDevices
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QApplication, QMenu, QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
@@ -21,6 +22,8 @@ from PyQt6.QtWidgets import (
 from .domain import Device, build_rtsp_url
 from .p2p import P2PBridge, P2PError, bridge_pool
 from .cloud_video import CloudVideoWorker
+from .cloud_audio import CloudAudioWorker, SAMPLE_RATE, BYTES_PER_SECOND
+from .playback import FramePacer
 
 
 CAMERA_MIME = "application/x-monitor-linux-cameras"
@@ -140,6 +143,7 @@ class VideoTile(QWidget):
     def __init__(self, number, parent=None):
         super().__init__(parent)
         self.number = number
+        self.init_frame_pacing()
         self.setObjectName(f"tile_{number}")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAcceptDrops(True)
@@ -160,6 +164,14 @@ class VideoTile(QWidget):
         self._retry_timer.timeout.connect(self.retry_video)
         self._workers = []
         self.cloud_video_worker = None
+        self.cloud_audio_worker = None
+        self._audio_sink = None
+        self._audio_io = None
+        self._audio_pending = bytearray()
+        self._audio_generation = 0
+        self._audio_timer = QTimer(self)
+        self._audio_timer.setInterval(20)
+        self._audio_timer.timeout.connect(self.flush_cloud_audio)
         self._cloud_fullscreen = None
         self._fullscreen_image = None
         self.audio = QAudioOutput(self); self.audio.setMuted(True)
@@ -192,7 +204,7 @@ class VideoTile(QWidget):
         self.status = QLabel("Selecione um dispositivo e clique em Conectar.")
         self.status.setWordWrap(True)
         self.mute = QCheckBox("Áudio")
-        self.mute.toggled.connect(lambda enabled: self.audio.setMuted(not enabled))
+        self.mute.toggled.connect(self.toggle_audio)
         stop = QPushButton("Desconectar"); stop.clicked.connect(self.disconnect)
         snapshot = QPushButton("Capturar"); snapshot.clicked.connect(self.capture)
         full = QPushButton("Tela cheia"); full.clicked.connect(self.fullscreen)
@@ -209,6 +221,35 @@ class VideoTile(QWidget):
         self.player.errorOccurred.connect(self.failed)
         self.player.mediaStatusChanged.connect(self.media_status)
         self.video.videoSink().videoFrameChanged.connect(self.frame_changed)
+
+    def init_frame_pacing(self):
+        self._frame_pacer = FramePacer()
+        self._paced_generation = self._generation if hasattr(self, "_generation") else 0
+        self._presentation_timer = QTimer(self)
+        self._presentation_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._presentation_timer.setInterval(8)
+        self._presentation_timer.timeout.connect(self.present_cloud_frame)
+
+    def receive_cloud_frames(self, worker, generation):
+        if generation != self._generation or not self.device_id:
+            return
+        if worker.paced_video:
+            self._frame_pacer.set_rate(worker.frame_rate)
+            self._frame_pacer.push(worker.take_frames(), time.monotonic())
+            self._paced_generation = generation
+            if not self._presentation_timer.isActive():
+                self._presentation_timer.start()
+        else:
+            self.cloud_frame(worker.take_frame(), generation)
+
+    def present_cloud_frame(self):
+        if self._paced_generation != self._generation or not self.device_id:
+            self._presentation_timer.stop()
+            self._frame_pacer.clear()
+            return
+        image = self._frame_pacer.poll(time.monotonic())
+        if image is not None:
+            self.cloud_frame(image, self._paced_generation)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(CAMERA_MIME):
@@ -282,15 +323,107 @@ class VideoTile(QWidget):
         password, self._pending_password = self._pending_password, None
         self.status.setText("Túnel Cloud conectado. Abrindo vídeo…")
         size = (1280, 720) if device.subtype == 0 else (640, 360)
-        worker = CloudVideoWorker(build_rtsp_url(local, password or ""), self, size=size)
+        worker = CloudVideoWorker(build_rtsp_url(local, password or ""), self, size=size, native_video=True, paced_video=True)
         self.cloud_video_worker = worker
         self._workers.append(worker)
-        worker.frame.connect(lambda image: self.cloud_frame(image, generation))
+        self._frame_pacer.clear()
+        worker.frame.connect(lambda image: self.receive_cloud_frames(worker, generation))
         worker.failed.connect(lambda message: self.p2p_failed(message, generation))
         worker.finished.connect(lambda: self.finish_worker(worker))
-        self.mute.setEnabled(False)
-        self.mute.setToolTip("Áudio por Intelbras Cloud ainda não disponível.")
+        self.mute.setEnabled(True)
+        self.mute.setToolTip("Ouvir o áudio deste canal, quando o DVR fornecer áudio.")
         worker.start()
+        if self.mute.isChecked():
+            self.start_cloud_audio()
+
+    def toggle_audio(self, enabled):
+        device = self._active_device
+        if device is None or device.connection != 'cloud':
+            self.audio.setMuted(not enabled)
+            return
+        if enabled:
+            self.start_cloud_audio()
+        else:
+            self.stop_cloud_audio()
+            self.mute.setToolTip('Áudio desligado.')
+
+    def start_cloud_audio(self):
+        self.stop_cloud_audio()
+        device = self._active_device
+        proxy = self.p2p_bridge.entry['bridge'].proxy if self.p2p_bridge is not None else None
+        if device is None or proxy is None:
+            self.mute.setToolTip('Aguarde a conexão com o DVR para ouvir o áudio.')
+            return
+        output = QMediaDevices.defaultAudioOutput()
+        audio_format = QAudioFormat()
+        audio_format.setSampleRate(SAMPLE_RATE)
+        audio_format.setChannelCount(1)
+        audio_format.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        generation = self._audio_generation
+        if output.isNull() or not output.isFormatSupported(audio_format):
+            self.cloud_audio_failed('Não há uma saída de áudio compatível disponível.', generation)
+            return
+        sink = QAudioSink(output, audio_format, self)
+        sink.setBufferSize(BYTES_PER_SECOND // 4)
+        sink.setVolume(0.7)
+        self._audio_sink = sink
+        self._audio_io = sink.start()
+        if self._audio_io is None:
+            self.cloud_audio_failed('Não foi possível abrir a saída de áudio.', generation)
+            return
+        local = replace(device, host='127.0.0.1', port=proxy.port, connection='rtsp')
+        worker = CloudAudioWorker(build_rtsp_url(local, self._session_password or ''), self)
+        self.cloud_audio_worker = worker
+        self._workers.append(worker)
+        worker.pcm_ready.connect(lambda: self.receive_cloud_audio(worker, generation))
+        worker.failed.connect(lambda message: self.cloud_audio_failed(message, generation))
+        worker.finished.connect(lambda: self.finish_worker(worker))
+        self.mute.setToolTip('Conectando áudio…')
+        self._audio_timer.start()
+        worker.start()
+
+    def receive_cloud_audio(self, worker, generation):
+        if generation != self._audio_generation or not self.mute.isChecked():
+            return
+        self._audio_pending.extend(worker.take_pcm())
+        maximum = BYTES_PER_SECOND // 4
+        if len(self._audio_pending) > maximum:
+            del self._audio_pending[:-maximum]
+        self.mute.setToolTip(f'Áudio recebido — nível {worker.level_dbfs:.1f} dBFS.')
+        self.flush_cloud_audio()
+
+    def flush_cloud_audio(self):
+        if self._audio_sink is None or self._audio_io is None or not self._audio_pending:
+            return
+        size = min(self._audio_sink.bytesFree(), len(self._audio_pending))
+        size -= size % 2
+        if size:
+            written = self._audio_io.write(bytes(self._audio_pending[:size]))
+            if written > 0:
+                del self._audio_pending[:written]
+            elif written < 0:
+                self.cloud_audio_failed('Falha na saída de áudio.', self._audio_generation)
+
+    def stop_cloud_audio(self):
+        self._audio_generation += 1
+        self._audio_timer.stop()
+        worker, self.cloud_audio_worker = self.cloud_audio_worker, None
+        if worker is not None:
+            worker.cancel()
+        if self._audio_sink is not None:
+            self._audio_sink.stop()
+            self._audio_sink.deleteLater()
+        self._audio_sink = self._audio_io = None
+        self._audio_pending.clear()
+
+    def cloud_audio_failed(self, message, generation):
+        if generation != self._audio_generation:
+            return
+        self.stop_cloud_audio()
+        self.mute.blockSignals(True)
+        self.mute.setChecked(False)
+        self.mute.blockSignals(False)
+        self.mute.setToolTip(message)
 
     def set_presentation(self, enabled):
         if enabled == self._presentation:
@@ -319,6 +452,7 @@ class VideoTile(QWidget):
         updated = replace(device, subtype=self.quality.currentData())
         proxy = self.p2p_bridge.entry["bridge"].proxy if self.p2p_bridge is not None else None
         if updated.connection == "cloud" and proxy is not None:
+            self.stop_cloud_audio()
             self._retry_timer.stop(); self._retry_context = None; self._retry_count = 0
             self._generation += 1
             generation = self._generation
@@ -351,15 +485,22 @@ class VideoTile(QWidget):
         self.last_image = image
         if first:
             self.activity_changed.emit()
-        self.cloud_image.setPixmap(QPixmap.fromImage(image).scaled(
-            self.display.size(), Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation))
-        self.status.setText("Reproduzindo via Intelbras Cloud")
-        self.display.setCurrentWidget(self.cloud_image)
-        if self._fullscreen_image is not None:
-            self._fullscreen_image.setPixmap(QPixmap.fromImage(image).scaled(
-                self._fullscreen_image.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
+        if isinstance(image, QVideoFrame):
+            self.video.videoSink().setVideoFrame(image)
+            if first:
+                self.status.setText("Reproduzindo via Intelbras Cloud")
+                self.display.setCurrentWidget(self.video)
+            return
+        # Paint only the visible surface; fullscreen otherwise doubles the work.
+        fullscreen = self._fullscreen_image is not None and self._fullscreen_image.isVisible()
+        target = self._fullscreen_image if fullscreen else self.cloud_image
+        size = target.size() if fullscreen else self.display.size()
+        target.setPixmap(QPixmap.fromImage(image).scaled(
+            size, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation))
+        if first:
+            self.status.setText("Reproduzindo via Intelbras Cloud")
+            self.display.setCurrentWidget(self.cloud_image)
 
     def p2p_failed(self, message, generation):
         if generation != self._generation:
@@ -396,11 +537,16 @@ class VideoTile(QWidget):
             self.p2p_worker = None
         if self.cloud_video_worker is worker:
             self.cloud_video_worker = None
+        if self.cloud_audio_worker is worker:
+            self.cloud_audio_worker = None
         if worker in self._workers:
             self._workers.remove(worker)
         worker.deleteLater()
 
     def disconnect(self):
+        self.stop_cloud_audio()
+        self._presentation_timer.stop()
+        self._frame_pacer.clear()
         from PyQt6.QtCore import QUrl
         self.player.stop(); self.player.setSource(QUrl())
         self._generation += 1
@@ -445,6 +591,8 @@ class VideoTile(QWidget):
             self.disconnect(); self.status.setText("Transmissão encerrada")
 
     def frame_changed(self, frame):
+        if self.cloud_video_worker is not None and getattr(self.cloud_video_worker, "native_video", False):
+            return
         if self.device_id and frame.isValid():
             image = frame.toImage()
             if not image.isNull():
@@ -458,12 +606,15 @@ class VideoTile(QWidget):
     def capture(self):
         if self.last_image is None:
             QMessageBox.information(self, "Captura", "Ainda não há imagem disponível."); return
-        image = self.last_image.copy()
+        image = self.last_image.toImage() if isinstance(self.last_image, QVideoFrame) else self.last_image.copy()
         path, _ = QFileDialog.getSaveFileName(self, "Salvar captura", "captura.png", "PNG (*.png)")
         if path and not image.save(path, "PNG"):
             QMessageBox.warning(self, "Captura", "Não foi possível salvar a imagem.")
 
     def fullscreen(self):
+        if isinstance(self.last_image, QVideoFrame):
+            self.video.setFullScreen(not self.video.isFullScreen())
+            return
         if self.cloud_video_worker is not None or self.display.currentWidget() is self.cloud_image:
             if self._cloud_fullscreen is not None:
                 self._cloud_fullscreen.close()

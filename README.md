@@ -13,6 +13,8 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 - HD por padrão; escolha SD/HD por quadro.
 - Tela cheia apenas com imagens; F11 e Esc para entrar/sair.
 - Captura de imagem e indicação de vídeo recebido.
+- Áudio Cloud por canal, acionado pelo checkbox Áudio, com indicação de nível no tooltip.
+- Compensação automática do formato Intelbras 1080N (960×1080).
 - Senhas e tokens somente na memória da sessão.
 
 ## Instalação no Debian 13
@@ -20,7 +22,7 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 Baixe o pacote `.deb` na página de [releases](https://github.com/poajefersonld-1983/Linux-Intelbras/releases) e instale:
 
 ```sh
-sudo apt install ./linux-intelbras_0.12.0-1_all.deb
+sudo apt install ./linux-intelbras_0.13.0-1_all.deb
 linux-intelbras
 ```
 
@@ -47,7 +49,7 @@ Copie os exemplos para arquivos **locais**, preencha seus próprios parâmetros 
 
 ## Limitações
 
-Compatibilidade varia conforme o gravador e sua configuração. O transporte implementa IPv4/VDT; IPv6 e equipamentos com outros protocolos não foram validados. Áudio Cloud não está habilitado. SD usa o fluxo extra e HD usa o principal, conforme configurados no equipamento. O vídeo Cloud é renderizado em 640×360 ou 1280×720, até 10 quadros/s. Textos incorporados pelo próprio gravador permanecem no vídeo.
+Compatibilidade varia conforme o gravador e sua configuração. O transporte implementa IPv4/VDT; IPv6 e equipamentos com outros protocolos não foram validados. O áudio Cloud depende de o DVR fornecer uma faixa de áudio; a recepção solicita somente áudio e usa PCM mono a 16 kHz para reprodução. SD usa o fluxo extra e HD usa o principal, conforme configurados no equipamento. O vídeo Cloud é renderizado em 640×360 ou 1280×720, na cadência informada pela câmera, com decodificação e escala VAAPI quando disponíveis, retorno à CPU para fluxos incompatíveis e filas limitadas para evitar acúmulo de atraso. A escala na GPU pode ser desativada com SIMNEXT_GPU_SCALING=0. A taxa estimada do formato de saída não substitui a taxa de entrada da câmera. Textos incorporados pelo próprio gravador permanecem no vídeo.
 
 ## Desenvolvimento e licença
 

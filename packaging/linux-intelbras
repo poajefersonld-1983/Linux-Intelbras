@@ -1,3 +1,4 @@
 #!/bin/sh
 export PYTHONPATH=/usr/share/linux-intelbras
+export SIMNEXT_GPU_SCALING="${SIMNEXT_GPU_SCALING:-1}"
 exec /usr/bin/python3 -m simnext_linux "$@"

@@ -113,7 +113,7 @@ class PoolTests(unittest.TestCase):
         from simnext_linux.p2p import BridgePool
         with patch("simnext_linux.p2p.P2PBridge") as factory:
             factory.return_value.start.return_value = 1234
-            pool = BridgePool()
+            pool = BridgePool(max_streams=4)
             first, second = pool.acquire("example", 554), pool.acquire("example", 554)
             self.assertEqual(first.start(), second.start())
             self.assertEqual(factory.call_count, 1)
@@ -126,8 +126,22 @@ class PoolTests(unittest.TestCase):
     def test_more_than_four_channels_use_another_transport(self):
         from simnext_linux.p2p import BridgePool
         with patch("simnext_linux.p2p.P2PBridge") as factory:
-            pool = BridgePool()
+            pool = BridgePool(max_streams=4)
             leases = [pool.acquire("example", 554) for _ in range(9)]
             self.assertEqual(factory.call_count, 3)
             for lease in leases: lease.close()
+            self.assertEqual(pool.entries, [])
+
+
+class IndependentTunnelTests(unittest.TestCase):
+    def test_hd_cameras_get_independent_tunnels_by_default(self):
+        from simnext_linux.p2p import BridgePool
+        with patch("simnext_linux.p2p.P2PBridge") as factory:
+            pool = BridgePool()
+            first, second = pool.acquire("example", 554), pool.acquire("example", 554)
+            self.assertIsNot(first.entry, second.entry)
+            self.assertEqual(factory.call_count, 2)
+            first.close()
+            self.assertEqual(second.entry["users"], 1)
+            second.close()
             self.assertEqual(pool.entries, [])

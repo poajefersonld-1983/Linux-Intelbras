@@ -11,7 +11,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "linux-intelbras"
-VERSION = "0.12.0-1"
+VERSION = "0.13.0-1"
 CONTROL = f"""Package: {PACKAGE}
 Version: {VERSION}
 Architecture: all
