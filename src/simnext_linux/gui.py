@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
     QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QSplitter, QScrollArea,
-    QStyledItemDelegate, QStyle,
+    QStyledItemDelegate, QStyle, QSizePolicy,
 )
 
 from .domain import Device, build_rtsp_url
@@ -32,6 +32,20 @@ DEVICE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 CAMERA_STATE_ROLE = DEVICE_ROLE + 1
 CAMERA_NAME_ROLE = DEVICE_ROLE + 2
 CAMERA_TILES_ROLE = DEVICE_ROLE + 3
+
+
+# Each rectangle is (row, column, row span, column span).
+MOSAICS = {
+    1: ('1 tela', [(0, 0, 1, 1)]),
+    2: ('2 telas · lado a lado', [(0, 0, 1, 1), (0, 1, 1, 1)]),
+    3: ('3 telas · uma em destaque', [(0, 0, 2, 2), (0, 2, 1, 1), (1, 2, 1, 1)]),
+    4: ('4 telas · 2 × 2', [(r, c, 1, 1) for r in range(2) for c in range(2)]),
+    6: ('6 telas · uma em destaque', [(0, 0, 2, 2), (0, 2, 1, 1), (1, 2, 1, 1),
+                                      (2, 0, 1, 1), (2, 1, 1, 1), (2, 2, 1, 1)]),
+    8: ('8 telas · 4 × 2', [(r, c, 1, 1) for r in range(2) for c in range(4)]),
+    9: ('9 telas · 3 × 3', [(r, c, 1, 1) for r in range(3) for c in range(3)]),
+    16: ('16 telas · 4 × 4', [(r, c, 1, 1) for r in range(4) for c in range(4)]),
+}
 
 
 class ClientListDelegate(QStyledItemDelegate):
@@ -287,12 +301,14 @@ class VideoTile(QWidget):
         self.video = QVideoWidget(self)
         self.placeholder = QLabel("Nenhum vídeo aberto")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.placeholder.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.placeholder.setStyleSheet("background:#111827;color:#94a3b8;padding:16px;border-radius:4px")
         self.display = QStackedWidget(self)
         self.display.addWidget(self.placeholder)
         self.display.addWidget(self.video)
         self.cloud_image = QLabel()
         self.cloud_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cloud_image.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.cloud_image.setStyleSheet("background:#111827")
         self.display.addWidget(self.cloud_image)
         for surface in (self.display, self.video, self.placeholder, self.cloud_image):
@@ -301,6 +317,7 @@ class VideoTile(QWidget):
         self.player.setVideoOutput(self.video)
         self.title = QLabel(f"Tela {number} — livre")
         self.title.installEventFilter(self)
+        self.title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.quality = QComboBox()
         self.quality.addItem("SD", 1); self.quality.addItem("HD", 0)
         self.quality.setCurrentIndex(1)
@@ -317,19 +334,51 @@ class VideoTile(QWidget):
         stop = QPushButton("Desconectar"); stop.clicked.connect(self.disconnect)
         snapshot = QPushButton("Capturar"); snapshot.clicked.connect(self.capture)
         full = QPushButton("Tela cheia"); full.clicked.connect(self.fullscreen)
+        self._compact = False
+        self.tile_options = QPushButton('⋯')
+        self.tile_options.setToolTip('Capturar, tela cheia e desconectar')
+        self.tile_options.setAccessibleName('Opções da câmera')
+        tile_menu = QMenu(self.tile_options)
+        for label, callback in [('Capturar', self.capture), ('Tela cheia', self.fullscreen), ('Desconectar', self.disconnect)]:
+            tile_menu.addAction(label).triggered.connect(callback)
+        self.tile_options.setMenu(tile_menu)
+        self.tile_options.hide()
+        self._regular_controls = [snapshot, full, stop]
         controls = QHBoxLayout()
+        self.controls_layout = controls
         for widget in [self.mute, snapshot, full, stop]: controls.addWidget(widget)
+        controls.addWidget(self.tile_options)
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         header.addWidget(self.title, 1); header.addWidget(self.quality)
         layout.addLayout(header); layout.addWidget(self.display, 1)
         layout.addWidget(self.status); layout.addLayout(controls)
-        self._chrome_widgets = [self.title, self.quality, self.status, self.mute, snapshot, full, stop]
+        self._chrome_widgets = [self.title, self.quality, self.status, self.mute, snapshot, full, stop, self.tile_options]
+        self._regular_margins = layout.contentsMargins()
+        self._regular_spacing = layout.spacing()
         self.video.setMinimumSize(160, 100)
         self.display.setMinimumSize(160, 100)
         self.player.errorOccurred.connect(self.failed)
         self.player.mediaStatusChanged.connect(self.media_status)
         self.video.videoSink().videoFrameChanged.connect(self.frame_changed)
+
+    def set_compact(self, compact):
+        self._compact = compact
+        if self._presentation:
+            return
+        self.status.setVisible(not compact)
+        for widget in self._regular_controls:
+            widget.setVisible(not compact)
+        self.tile_options.setVisible(compact)
+        if compact:
+            self.layout().setContentsMargins(4, 4, 4, 4)
+        else:
+            self.layout().setContentsMargins(self._regular_margins)
+        self.layout().setSpacing(3 if compact else self._regular_spacing)
+        self.controls_layout.setSpacing(3 if compact else 6)
+        self.video.setMinimumSize(120 if compact else 160, 64 if compact else 100)
+        self.display.setMinimumSize(120 if compact else 160, 64 if compact else 100)
+        self.title.setToolTip(self.title.text())
 
     def init_frame_pacing(self):
         self._frame_pacer = FramePacer()
@@ -552,6 +601,7 @@ class VideoTile(QWidget):
             margins, spacing, style = self._normal_tile_layout
             self.layout().setContentsMargins(margins); self.layout().setSpacing(spacing)
             self.placeholder.setStyleSheet(style)
+            self.set_compact(self._compact)
 
     def change_quality(self, *_):
         self._quality_chosen = True
@@ -854,14 +904,14 @@ class MainWindow(QMainWindow):
         account_actions = QHBoxLayout()
         account_actions.addWidget(account); account_actions.addWidget(configure)
         side.addLayout(account_actions)
-        options.addWidget(QLabel("Mosaico"))
+
         self.mosaic = QComboBox()
-        for n in (1, 4, 9): self.mosaic.addItem(f"{n} tela(s)", n)
-        self.mosaic.setCurrentIndex(1)
-        self.mosaic.currentIndexChanged.connect(self.layout_tiles); options.addWidget(self.mosaic)
+        for count, (label, _) in MOSAICS.items(): self.mosaic.addItem(label, count)
+        self.mosaic.setCurrentIndex(self.mosaic.findData(4))
+        self.mosaic.currentIndexChanged.connect(self.layout_tiles)
         self.mosaic_fullscreen_button = QPushButton("Tela cheia do mosaico (F11)")
         self.mosaic_fullscreen_button.clicked.connect(self.toggle_mosaic_fullscreen)
-        options.addWidget(self.mosaic_fullscreen_button)
+
         note = QLabel("Intelbras Cloud e RTSP\nClique no quadro e depois na câmera.\nOu arraste a câmera para o quadro.")
         note.setWordWrap(True); options.addWidget(note)
         self.options_toggle = QPushButton('Mais opções ▾')
@@ -875,6 +925,14 @@ class MainWindow(QMainWindow):
         self.options_toggle.toggled.connect(self.toggle_client_options)
         side.addWidget(self.options_toggle); side.addWidget(self.options_scroll)
         area = QWidget(); area_layout = QVBoxLayout(area)
+        self.mosaic_toolbar = QWidget()
+        toolbar_layout = QHBoxLayout(self.mosaic_toolbar)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.addWidget(QLabel('Mosaico'))
+        toolbar_layout.addWidget(self.mosaic)
+        toolbar_layout.addStretch(1)
+        toolbar_layout.addWidget(self.mosaic_fullscreen_button)
+        area_layout.addWidget(self.mosaic_toolbar)
         self.fullscreen_exit = QPushButton("Sair da tela cheia (Esc)")
         self.fullscreen_exit.clicked.connect(self.exit_fullscreen)
         self.fullscreen_exit.hide()
@@ -887,7 +945,7 @@ class MainWindow(QMainWindow):
         self.main_splitter.setStretchFactor(0, 0); self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setSizes([360, 920])
         root.addWidget(self.main_splitter, 1)
-        self.tiles = [VideoTile(i + 1) for i in range(9)]
+        self.tiles = [VideoTile(i + 1) for i in range(16)]
         for tile in self.tiles:
             tile.cameras_dropped.connect(self.drop_cameras)
             tile.tile_clicked.connect(self.select_tile)
@@ -1023,21 +1081,29 @@ class MainWindow(QMainWindow):
 
     def layout_tiles(self, *_):
         count = self.mosaic.currentData()
+        positions = MOSAICS[count][1]
+        destination = self.target.currentData() or 0
         while self.grid.count(): self.grid.takeAt(0)
-        for i in range(3):
-            self.grid.setRowStretch(i, 0)
-            self.grid.setColumnStretch(i, 0)
+        rows = max(r + h for r, c, h, w in positions)
+        columns = max(c + w for r, c, h, w in positions)
+        for i in range(4):
+            self.grid.setRowStretch(i, int(i < rows))
+            self.grid.setColumnStretch(i, int(i < columns))
+        self.target.blockSignals(True)
         self.target.clear()
-        columns = {1: 1, 4: 2, 9: 3}[count]
-        for i in range(columns):
-            self.grid.setRowStretch(i, 1)
-            self.grid.setColumnStretch(i, 1)
         for i, tile in enumerate(self.tiles):
             tile.setVisible(i < count)
+            tile.set_compact(count > 4 or count == 3 and i > 0)
             if i < count:
-                self.grid.addWidget(tile, i // columns, i % columns)
-                self.target.addItem(f"Tela {i + 1}", i)
-            else: tile.disconnect()
+                self.grid.addWidget(tile, *positions[i])
+                self.target.addItem(f'Tela {i + 1}', i)
+            else:
+                if tile.device_id is not None or tile._workers:
+                    tile.disconnect()
+        self.target.setCurrentIndex(self.target.findData(min(destination, count - 1)))
+        self.target.blockSignals(False)
+        self.highlight_target()
+        self.update_camera_selection()
 
     def load_channel_limits(self):
         try:
@@ -1154,8 +1220,8 @@ class MainWindow(QMainWindow):
             if (identity, channel) not in seen:
                 choices.append(replace(devices[identity], channel=channel))
                 seen.add((identity, channel))
-        if not choices or len(choices) > 9:
-            raise ValueError("Selecione de uma a nove câmeras para abrir no mosaico.")
+        if not choices or len(choices) > 16:
+            raise ValueError("Selecione de uma a dezesseis câmeras para abrir no mosaico.")
         return choices
 
     def drop_cameras(self, mime, target):
@@ -1168,10 +1234,10 @@ class MainWindow(QMainWindow):
             choices = self.camera_choices([(record["device"], record["channel"]) for record in records])
             occupied = sum(tile.device_id is not None for tile in self.tiles) - bool(self.tiles[target].device_id)
             required = occupied + len(choices)
-            if required > 9:
+            if required > len(self.tiles):
                 raise ValueError("Não há telas livres para todas as câmeras arrastadas.")
             if required > self.mosaic.currentData():
-                self.mosaic.setCurrentIndex(self.mosaic.findData(next(n for n in (1, 4, 9) if n >= required)))
+                self.mosaic.setCurrentIndex(self.mosaic.findData(next(n for n in MOSAICS if n >= required)))
             count = self.mosaic.currentData()
             order = list(range(target + 1, count)) + list(range(target))
             targets = [self.tiles[target]] + [self.tiles[i] for i in order if self.tiles[i].device_id is None]
@@ -1187,7 +1253,7 @@ class MainWindow(QMainWindow):
         if required > len(self.tiles):
             raise ValueError("Não há telas livres para todas as câmeras. Selecione menos câmeras ou desconecte uma tela.")
         if required > self.mosaic.currentData():
-            count = next(n for n in (1, 4, 9) if n >= required)
+            count = next(n for n in MOSAICS if n >= required)
             self.mosaic.setCurrentIndex(self.mosaic.findData(count))
         self.target.setCurrentIndex(self.target.findData(start))
         count = self.mosaic.currentData()
@@ -1297,6 +1363,7 @@ class MainWindow(QMainWindow):
         self._mosaic_was_maximized = self.isMaximized()
         self._mosaic_fullscreen = True
         self.sidebar.hide()
+        self.mosaic_toolbar.hide()
         self.fullscreen_exit.hide()
         self._presentation_layouts = []
         widget = self.grid.parentWidget()
@@ -1327,6 +1394,7 @@ class MainWindow(QMainWindow):
                 layout.setContentsMargins(margins); layout.setSpacing(spacing)
             self.centralWidget().setStyleSheet(self._normal_central_style)
             self.sidebar.show()
+            self.mosaic_toolbar.show()
             self.highlight_target()
             self.showNormal()
             if self._mosaic_geometry is not None:

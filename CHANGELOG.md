@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## 0.16.0 — 08/11/2026
+
+- Adiciona mosaicos de 2, 3, 6, 8 e 16 câmeras, mantendo os modelos de 1, 4 e 9.
+- Oferece uma câmera em destaque nos modelos de 3 e 6 telas.
+- Coloca o seletor de mosaico acima das imagens, com acesso direto à tela cheia.
+- Compacta os controles nas grades densas, preservando áudio, captura e desconexão.
+- Preserva a tela de destino e as transmissões que permanecem visíveis ao trocar o modelo.
+- Adapta as grades à janela sem sobreposição, mantendo a proporção do vídeo.
+
 ## 0.15.0 — 08/11/2026
 
 - Exibe câmeras em cartões maiores, organizados em duas colunas.

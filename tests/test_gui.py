@@ -42,7 +42,7 @@ class GuiTests(unittest.TestCase):
         self.window.refresh()
         self.assertEqual(self.window.devices.count(), 1)
         for index, count in [(2, 9), (1, 4), (0, 1)]:
-            self.window.mosaic.setCurrentIndex(index)
+            self.window.mosaic.setCurrentIndex(self.window.mosaic.findData(count))
             self.assertEqual(self.window.grid.count(), count)
             self.assertTrue(all(tile.device_id is None for tile in self.window.tiles))
             self.assertTrue(all(tile.audio.isMuted() for tile in self.window.tiles))
@@ -63,17 +63,17 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.store.list()[0].channel, 1)
 
     def test_expansion_preserves_destination(self):
-        self.window.mosaic.setCurrentIndex(1)
+        self.window.mosaic.setCurrentIndex(self.window.mosaic.findData(4))
         self.window.target.setCurrentIndex(3)
         assignments = self.window.mosaic_assignments(list(range(1, 6)))
-        self.assertEqual(self.window.mosaic.currentData(), 9)
+        self.assertEqual(self.window.mosaic.currentData(), 6)
         self.assertEqual(assignments[0][1].number, 4)
         self.assertEqual(self.window.target.currentData(), 3)
 
     def test_mosaic_capacity_does_not_replace_existing_video(self):
         self.window.tiles[0].device_id = "playing"
         with self.assertRaises(ValueError):
-            self.window.mosaic_assignments(list(range(1, 10)))
+            self.window.mosaic_assignments(list(range(1, 17)))
         self.assertEqual(self.window.tiles[0].device_id, "playing")
 
     def test_drop_two_clients_on_specific_tiles(self):
@@ -86,7 +86,7 @@ class GuiTests(unittest.TestCase):
         self.window.refresh()
         self.window.all_clients.setChecked(True)
         self.window.refresh_channels()
-        self.window.mosaic.setCurrentIndex(1)
+        self.window.mosaic.setCurrentIndex(self.window.mosaic.findData(4))
         for i in range(self.window.channels.count()):
             item = self.window.channels.item(i)
             item.setSelected((item.data(DEVICE_ROLE), item.data(Qt.ItemDataRole.UserRole)) in [("a", 2), ("b", 4)])
@@ -275,7 +275,7 @@ class GuiTests(unittest.TestCase):
 
     def test_fullscreen_mosaic_preserves_tiles_quality_and_destination(self):
         from PyQt6.QtTest import QTest
-        self.window.mosaic.setCurrentIndex(2); self.window.select_tile(3)
+        self.window.mosaic.setCurrentIndex(self.window.mosaic.findData(9)); self.window.select_tile(3)
         tile = self.window.tiles[0]; tile.device_id = "playing"
         tile.quality.setCurrentIndex(1)
         generation = tile._generation

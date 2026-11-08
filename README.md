@@ -10,6 +10,10 @@ Aplicativo independente, com interface PyQt6, para abrir câmeras por RTSP ou In
 
 Prévia ilustrativa com cadastros e estados fictícios, sem imagens reais de câmeras.
 
+![Mosaico de seis telas com uma em destaque](docs/mosaic-layouts.png)
+
+Prévia com imagens numeradas sintéticas; a proporção original do vídeo é preservada.
+
 ## Recursos
 
 - Clique no cliente para abrir automaticamente os canais 1 a 4 no mosaico.
@@ -21,7 +25,9 @@ Prévia ilustrativa com cadastros e estados fictícios, sem imagens reais de câ
 
 - Login da Conta Intelbras e importação do catálogo iSIC Lite.
 - Transporte IPv4 direto e por relay, com parâmetros fornecidos localmente.
-- Mosaicos de 1, 4 ou 9 quadros, combinando câmeras de clientes diferentes.
+- Mosaicos de 1, 2, 3, 4, 6, 8, 9 ou 16 quadros, combinando câmeras de clientes diferentes.
+- Modelos de 3 e 6 telas com uma câmera em destaque; grades de 4 × 2, 3 × 3 e 4 × 4.
+- Seletor de mosaico acima das imagens e controles compactos nas grades maiores.
 - Clique ou arraste para escolher uma câmera e quadro individualmente. Clicar no mesmo cliente não reinicia seus quatro canais já abertos.
 - HD por padrão; escolha SD/HD por quadro.
 - Tela cheia apenas com imagens; F11 e Esc para entrar/sair.
@@ -35,7 +41,7 @@ Prévia ilustrativa com cadastros e estados fictícios, sem imagens reais de câ
 Baixe o pacote `.deb` na página de [releases](https://github.com/poajefersonld-1983/Linux-Intelbras/releases) e instale:
 
 ```sh
-sudo apt install ./linux-intelbras_0.15.0-1_all.deb
+sudo apt install ./linux-intelbras_0.16.0-1_all.deb
 linux-intelbras
 ```
 
